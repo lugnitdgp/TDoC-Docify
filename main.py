@@ -1,7 +1,7 @@
 import sys, os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox, QFrame, QVBoxLayout, QPushButton, QLabel, QInputDialog, QMenu, QDialog, QWidget, QHBoxLayout, QTextEdit
 from PyQt5.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot, QTimer
-# from PyQt5.QtPrintSupport import QPrinter
+from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtGui import QPixmap, QIcon, QTextDocument
 from PyQt5.uic import loadUi
 from utils.client import *
@@ -287,6 +287,18 @@ class MainWindow(QMainWindow):
         self.navbar.pushButtonBack.clicked.connect(self.switch_to_home)
         self.navbar.pushButtonShare.clicked.connect(lambda: self.open_share_dialog(docName))
         
+        existing_text_edit = self.navbar.textEdit
+        self.navbar.verticalLayout.removeWidget(existing_text_edit)
+        existing_text_edit.setParent(None)
+        
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.connect(('127.0.0.1', 5555))
+        
+        self.text_edit = MyTextEdit(self.server_socket)
+        self.navbar.verticalLayout.addWidget(self.text_edit)
+        
+        self.navbar.actionConvert_to_PDF.triggered.connect(self.convert_to_pdf)
+        
     def signup(self):
         full_name = self.signup_page.lineEditFullName.text()
         email = self.signup_page.lineEditEmail.text()
@@ -399,7 +411,62 @@ class MainWindow(QMainWindow):
         docName = doc_name
         self.update_text_edit()
     
-    
+    def fetch_and_update_content(self):
+        try:
+            cursor_position = self.text_edit.textCursor().position()
+            doc_query = supabase.table('docs').select('content', 'access').eq('doc_id', docId).execute()
+            user_uuids = supabase.table('docs').select('users').eq('doc_id', docId).execute().data[0]['users']
+            
+            if doc_query and doc_query.data:
+                latest_content = doc_query.data[0]['content']
+                access_level = doc_query.data[0]['access']
+                
+                if latest_content != self.text_edit.toHtml():
+                    cursor = self.text_edit.textCursor()
+                    cursor.setPosition(cursor_position)
+                    self.text_edit.setText(latest_content)
+                    
+                if access_level:
+                    if access_level == "Restricted":
+                        icon = QIcon("resources/images/lock.png")
+                        self.navbar.pushButton_6.setIcon(icon)
+                    elif access_level == "Readable":
+                        icon = QIcon("resources/images/read.png")
+                        self.navbar.pushButton_6.setIcon(icon)
+                    else:
+                        icon = QIcon("resources/images/write.png")
+                        self.navbar.pushButton_6.setIcon(icon)
+                        
+            if (userId in user_uuids):
+                if userId == user_uuids[0]:
+                    self.text_edit.setReadOnly(False)
+                    self.navbar.menuBar().findChild(QMenu, "menuAccess").setEnabled(True)
+                else:
+                    user_access = supabase.table('docs').select('user_access').eq('doc_id', docId).execute().data[0]['user_access']
+                    access_type = user_access[userId]
+                    if access_type == 'Restricted':
+                        if userId: user_uuids.remove(userId)
+                        supabase.table('docs').update({'users': user_uuids}).eq('doc_id', docId).execute()
+                        self.switch_to_home()
+                    elif access_type == 'Reader':
+                        self.text_edit.setReadOnly(True)
+                    else:
+                        self.text_edit.setReadOnly(False)
+                    self.navbar.menuBar().findChild(QMenu, "menuAccess").setEnabled(False)
+            else:  
+                access_type = supabase.table('docs').select('access').eq('doc_id', docId).execute().data[0]['access']
+                if access_type == "Restricted":
+                    self.switch_to_home()
+                if access_type == "Readable":
+                    self.navbar.menuBar().findChild(QMenu, "menuAccess").setEnabled(False)
+                    self.text_edit.setReadOnly(True)
+                else:
+                    self.navbar.menuBar().findChild(QMenu, "menuAccess").setEnabled(False)
+                    self.text_edit.setReadOnly(False)
+                    
+        except Exception as e:
+            print(f'An error occurred during fetch_and_update_content: {e}')
+            
     def update_text_edit(self):
         try:
             user_uuids = supabase.table('docs').select('users').eq('doc_id', docId).execute().data[0]['users']
@@ -443,11 +510,41 @@ class MainWindow(QMainWindow):
                     self.text_edit.setReadOnly(False)
                     self.navbar.menuBar().findChild(QMenu, 'menuAccess').setEnabled(False)
                     AuthenticationManager.show_popup("Access Granted", "You have write access to this document.")
+                    
+            self.start_sync_timer()
             
         except Exception as e:
             print(f'An error occurred during update_text_edit: {e}')
             
-                    
+            
+    def start_sync_timer(self):
+        self.sync_timer = QTimer()
+        self.sync_timer.timeout.connect(self.fetch_and_update_content)
+        self.sync_timer.start(25)
+        print("Sync timer started.")
+        
+    def convert_to_pdf(self):
+        try:
+            text_content = self.text_edit.toHtml()
+            
+            text_document = QTextDocument()
+            text_document.setHtml(text_content)
+            
+            doc_name = supabase.table('docs').select('name').eq('doc_id', docId).execute().data[0]['name']
+            documents_folder = os.path.join(os.path.expanduser('~'), "Desktop", "Docify", "Documents")
+            os.makedirs(documents_folder, exist_ok=True)
+            # ~/Desktop/Docify/Documents/{file_name}.pdf
+            pdf_file_path = os.path.join(documents_folder, f"{doc_name}.pdf")
+            
+            printer = QPrinter()
+            printer.setOutputFormat(QPrinter.PdfFormat)
+            printer.setOutputFileName(pdf_file_path)
+            
+            text_document.print_(printer)
+            AuthenticationManager.show_popup("PDF Created", f"PDF created at {pdf_file_path}")
+        except Exception as e:
+            print(f'An error occurred during convert_to_pdf: {e}')
+            
     def update_access(self, access_level):
         try:
             doc_id = supabase.table('docs').select('doc_id').eq('name', docName).execute().data[0]['doc_id']
