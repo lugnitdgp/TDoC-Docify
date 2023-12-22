@@ -1,7 +1,8 @@
-import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox, QFrame, QVBoxLayout, QPushButton, QLabel, QInputDialog, QMenu, QDialog, QWidget, QHBoxLayout
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap
+import sys, os
+from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox, QFrame, QVBoxLayout, QPushButton, QLabel, QInputDialog, QMenu, QDialog, QWidget, QHBoxLayout, QTextEdit
+from PyQt5.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot, QTimer
+# from PyQt5.QtPrintSupport import QPrinter
+from PyQt5.QtGui import QPixmap, QIcon, QTextDocument
 from PyQt5.uic import loadUi
 from utils.client import *
 from utils.credentials import google_password, google_username
@@ -9,7 +10,7 @@ import bcrypt
 import uuid
 import smtplib
 from email.mime.text import MIMEText
-
+import socket
 
 class AuthenticationManager:
     @staticmethod
@@ -224,6 +225,32 @@ class ShareDialog(QDialog):
         except Exception as e:
             print(f"An error occurred: {e}")
             AuthenticationManager.show_popup("Error", f"An error occurred: {e}")
+            
+class MyTextEdit(QTextEdit):
+    def __init__(self, server_socket):
+        super().__init__()
+        
+        self.server_socket = server_socket
+        self.cursorPositionChanged.connect(self.send_data)
+        
+    def send_data(self):
+        try:
+            html = self.toHtml()
+            
+            supabase.table('docs').update({'content': html}).eq('doc_id', docId).execute()
+            
+            if not self.server_socket or self.server_socket.fileno() == -1:
+                self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.server_socket.connect(('127.0.0.1', 5555))
+                
+            QMetaObject.invokeMethod(self, "send_to_server", Qt.QueuedConnection, Q_ARG(str, html))
+        except Exception as e:
+            print(f'An error occurred during send_data: {e}')
+            
+    @pyqtSlot(str)
+    def send_to_server(self, html):
+        self.server_socket.sendall(html.encode('utf-8'))
+        
 class MainWindow(QMainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -367,11 +394,12 @@ class MainWindow(QMainWindow):
             
     def switch_to_navbar(self, doc_name):
         self.stacked_widget.setCurrentWidget(self.navbar)
-        self.navbar.pushButton_6.setText(f"Hi {username}!")
+        self.navbar.label.setText(f"Hi {username}!")
         global docName
         docName = doc_name
         self.update_text_edit()
-        
+    
+    
     def update_text_edit(self):
         try:
             user_uuids = supabase.table('docs').select('users').eq('doc_id', docId).execute().data[0]['users']
@@ -379,8 +407,8 @@ class MainWindow(QMainWindow):
                 if userId == user_uuids[0]:
                     initial_data = supabase.table('docs').select('content').eq('doc_id', docId).execute().data[0]['content']
                     print(f'Initial data: {initial_data}')
-                    self.navbar.textEdit.setText(initial_data)
-                    self.navbar.textEdit.setReadOnly(False)
+                    self.text_edit.setText(initial_data)
+                    self.text_edit.setReadOnly(False)
                     self.navbar.menuBar().setEnabled(True)
                     self.navbar.menuBar().findChild(QMenu, 'menuAccess').setEnabled(True)
                 else:
@@ -392,10 +420,10 @@ class MainWindow(QMainWindow):
                         supabase.table('docs').update({'users': user_uuids}).eq('doc_id', docId).execute()
                         self.switch_to_home()
                     elif access_type == 'Reader':
-                        self.navbar.textEdit.setReadOnly(True)
+                        self.text_edit.setReadOnly(True)
                         AuthenticationManager.show_popup("Access Granted", "You have read-only access to this document.")
                     elif access_type == 'Writer':
-                        self.navbar.textEdit.setReadOnly(False)
+                        self.text_edit.setReadOnly(False)
                         AuthenticationManager.show_popup("Access Granted", "You have read-write access to this document.")
                     self.navbar.menuBar().findChild(QMenu, 'menuAccess').setEnabled(False)
             else:
@@ -406,17 +434,19 @@ class MainWindow(QMainWindow):
                 if access_type == "Readable":
                     initial_data = supabase.table('docs').select('content').eq('doc_id', docId).execute().data[0]['content']
                     print(f"Initial data: {initial_data}")
-                    self.navbar.textEdit.setReadOnly(True)
+                    self.text_edit.setReadOnly(True)
                     self.navbar.menuBar().findChild(QMenu, 'menuAccess').setEnabled(False)
                     AuthenticationManager.show_popup("Access Granted", "You have read-only access to this document.")
                 if access_type == "Writable":
                     initial_data = supabase.table('docs').select('content').eq('doc_id', docId).execute().data[0]['content']
                     print(f"Initial data: {initial_data}")
-                    self.navbar.textEdit.setReadOnly(False)
+                    self.text_edit.setReadOnly(False)
                     self.navbar.menuBar().findChild(QMenu, 'menuAccess').setEnabled(False)
                     AuthenticationManager.show_popup("Access Granted", "You have write access to this document.")
+            
         except Exception as e:
             print(f'An error occurred during update_text_edit: {e}')
+            
                     
     def update_access(self, access_level):
         try:
