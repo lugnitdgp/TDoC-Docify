@@ -1,8 +1,8 @@
 import sys, os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox, QFrame, QVBoxLayout, QPushButton, QLabel, QInputDialog, QMenu, QDialog, QWidget, QHBoxLayout, QTextEdit
-from PyQt5.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot, QTimer
+from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox, QFrame, QVBoxLayout, QPushButton, QLabel, QInputDialog, QMenu, QDialog, QWidget, QHBoxLayout, QTextEdit, QFileDialog, QSpinBox, QLineEdit, QTextBrowser
+from PyQt5.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot, QTimer, QUrl
 from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtGui import QPixmap, QIcon, QTextDocument
+from PyQt5.QtGui import QPixmap, QIcon, QTextDocument, QTextImageFormat, QDesktopServices
 from PyQt5.uic import loadUi
 from utils.client import *
 from utils.credentials import google_password, google_username
@@ -11,6 +11,10 @@ import uuid
 import smtplib
 from email.mime.text import MIMEText
 import socket
+
+from cloudinary_credentials import *
+import cloudinary.uploader
+import requests
 
 class AuthenticationManager:
     @staticmethod
@@ -88,7 +92,86 @@ class AuthenticationManager:
         msg.setText(message)
         msg.setIcon(QMessageBox.Information)
         msg.exec_()
-
+class ImageSizeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        self.width_label = QLabel("Width:")
+        self.height_label = QLabel("Height:")
+        self.width_spinbox = QSpinBox()
+        self.height_spinbox = QSpinBox()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Cancel")
+        
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout()
+        layout.addWidget(self.width_label)
+        layout.addWidget(self.width_spinbox)
+        layout.addWidget(self.height_label)
+        layout.addWidget(self.height_spinbox)
+        layout.addWidget(self.ok_button)
+        layout.addWidget(self.cancel_button)
+        
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        self.setLayout(layout)
+        
+    def get_image_size(self):
+        result = self.exec_()
+        if result == QDialog.Accepted:
+            return self.width_spinbox.value(), self.height_spinbox.value()
+        else:
+            return None, None
+        
+           
+class ImageHandler:
+    def __init__(self, main_window):
+        self.main_window = main_window
+        
+    def add_image(self):
+        try:
+            self.main_window.sync_timer.stop()
+            file_dialog = QFileDialog()
+            image_path, _ = file_dialog.getOpenFileName(self.main_window, "Select Image", "",  "Images (*.png *.xpm *.jpg *jpeg *.bmp)")
+            
+            if image_path:
+                size_dialog = ImageSizeDialog(self.main_window)
+                width, height = size_dialog.get_image_size()
+                
+                if width and height:
+                    image_name = image_path.split('/')[-1][:-4]
+                    upload_result = cloudinary.uploader.upload(image_path, public_id=image_name)
+                    
+                    if 'secure_url' in upload_result:
+                        hosted_url = upload_result['secure_url']
+                        print(f'Hosted URL: {hosted_url}')
+                        
+                        desktop_path = os.path.join(os.path.expanduser('~'), "Desktop")
+                        
+                        images_folder = os.path.join(desktop_path, "Docify", "Images")
+                        os.makedirs(images_folder, exist_ok=True)
+                        
+                        local_path = os.path.join(images_folder, f"{image_name}.png")
+                        
+                        response = requests.get(hosted_url, stream=True)
+                        with open(local_path, 'wb') as file:
+                            for chunk in response.iter_content(chunk_size=128):
+                                file.write(chunk)
+                                
+                        image_format = QTextImageFormat()
+                        image_format.setWidth(width)
+                        image_format.setHeight(height)
+                        image_format.setName(local_path)
+                        
+                        cursor = self.main_window.text_edit.textCursor()
+                        cursor.insertImage(image_format) 
+        except Exception as e:
+            print(f'An error occurred during add_image: {e}')
+        finally:
+            self.main_window.sync_timer.start()
 class ShareDialog(QDialog):
     def __init__(self, doc_name):
         super(ShareDialog, self).__init__()
@@ -270,6 +353,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stacked_widget)
 
         self.auth_manager = AuthenticationManager()
+        self.image_handler = ImageHandler(self)
         
         self.login_page.signUpLabel.mousePressEvent = self.switch_to_signup
         self.signup_page.logInLabel.mousePressEvent = self.switch_to_login
@@ -286,7 +370,7 @@ class MainWindow(QMainWindow):
         self.navbar.actionWritable_3.triggered.connect(lambda: self.update_access('Writable'))
         self.navbar.pushButtonBack.clicked.connect(self.switch_to_home)
         self.navbar.pushButtonShare.clicked.connect(lambda: self.open_share_dialog(docName))
-        
+         
         existing_text_edit = self.navbar.textEdit
         self.navbar.verticalLayout.removeWidget(existing_text_edit)
         existing_text_edit.setParent(None)
@@ -297,8 +381,97 @@ class MainWindow(QMainWindow):
         self.text_edit = MyTextEdit(self.server_socket)
         self.navbar.verticalLayout.addWidget(self.text_edit)
         
-        self.navbar.actionConvert_to_PDF.triggered.connect(self.convert_to_pdf)
+        self.navbar.actionLink.triggered.connect(self.insert_link)
+        self.navbar.pushButtonLink.clicked.connect(self.fetch_clickable_links)
         
+        self.navbar.actionConvert_to_PDF.triggered.connect(self.convert_to_pdf)
+        self.navbar.actionImage.triggered.connect(self.add_image)
+        
+    def add_image(self):
+        self.sync_timer.stop()
+        self.image_handler.add_image()
+        self.sync_timer.start()
+        
+    def insert_link(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Insert Link")
+        label_original = QLabel("Original Text:")
+        original_text_input = QLineEdit()
+        
+        label_link = QLabel("Link:")
+        link_input = QLineEdit()
+        
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(lambda: self.update_link(original_text_input.text(), link_input.text(), dialog))
+        
+        layout = QVBoxLayout()
+        layout.addWidget(label_original)
+        layout.addWidget(original_text_input)
+        layout.addWidget(label_link)
+        layout.addWidget(link_input)
+        layout.addWidget(ok_button)
+        
+        dialog.setLayout(layout)
+        
+        dialog.exec_()
+        
+    def update_link(self, original_text, link, dialog):
+        try:
+            cursor = self.text_edit.textCursor()
+            cursor_position = cursor.position()
+            
+            cursor.insertHtml(f'<a href="{link}">{original_text}</a>')
+            
+            new_cursor_position = cursor_position + len(f'<a href="{link}">{original_text}</a>')
+            cursor.setPosition(new_cursor_position)
+            
+            self.text_edit.setTextCursor(cursor)
+            
+            links_data = supabase.table('docs').select('links').eq('doc_id', docId).execute().data
+            current_links = links_data[0]['links'] if links_data else {}
+            current_links[original_text] = link
+            supabase.table('docs').update({'links': current_links}).eq('doc_id', docId).execute()
+            dialog.accept()
+        except Exception as e:
+            print(f'An error occurred during update_link: {e}')
+            
+    def fetch_clickable_links(self):
+        try:   
+            links_data = supabase.table('docs').select('links').eq('doc_id', docId).execute().data
+            clickable_links = links_data[0]['links'] if links_data else {}
+            links_browser = QTextBrowser()
+            for original_text, link in clickable_links.items():
+                links_browser.append(f'<a href="{link}">{original_text}</a>')
+                
+            links_browser.anchorClicked.connect(self.handle_link_click)
+            
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Your Links")
+            layout = QVBoxLayout()
+            layout.addWidget(links_browser)
+            dialog.setLayout(layout)
+            
+            dialog.exec_()
+        except Exception as e:
+            print(f'An error occurred during fetch_clickable_links: {e}') 
+            
+    def handle_link_click(self, link):
+        QDesktopServices.openUrl(QUrl(link.url())) 
+        
+    def text_edit_changed(self):
+        try:
+            links_data = supabase.table('docs').select('links').eq('doc_id', docId).execute().data
+            current_links = links_data[0]['links'] if links_data else {}
+            
+            for original_text in list(current_links.keys()):
+                if original_text not in self.text_edit.toHtml():
+                    # current_links.pop(original_text)
+                    del current_links[original_text]
+                    
+            supabase.table('docs').update({'links': current_links}).eq('doc_id', docId).execute() 
+        except Exception as e:
+            print(f'An error occurred during text_edit_changed: {e}')
+                
     def signup(self):
         full_name = self.signup_page.lineEditFullName.text()
         email = self.signup_page.lineEditEmail.text()

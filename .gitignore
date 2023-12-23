@@ -1,2 +1,3 @@
 utils/credentials.py
+cloudinary_credentials.py
 env
