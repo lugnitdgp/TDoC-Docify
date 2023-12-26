@@ -370,7 +370,12 @@ class MainWindow(QMainWindow):
         self.navbar.actionWritable_3.triggered.connect(lambda: self.update_access('Writable'))
         self.navbar.pushButtonBack.clicked.connect(self.switch_to_home)
         self.navbar.pushButtonShare.clicked.connect(lambda: self.open_share_dialog(docName))
-         
+        self.navbar.pushButton.clicked.connect(self.make_bold)
+        self.navbar.pushButton_2.clicked.connect(self.make_italic)
+        self.navbar.pushButton_3.clicked.connect(self.make_underline)
+        self.navbar.pushButtonColour.clicked.connect(self.change_colour)
+        self.navbar.pushButtonFont.clicked.connect(self.change_font)
+
         existing_text_edit = self.navbar.textEdit
         self.navbar.verticalLayout.removeWidget(existing_text_edit)
         existing_text_edit.setParent(None)
