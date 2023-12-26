@@ -2,7 +2,7 @@ import sys, os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QMessageBox, QFrame, QVBoxLayout, QPushButton, QLabel, QInputDialog, QMenu, QDialog, QWidget, QHBoxLayout, QTextEdit, QFileDialog, QSpinBox, QLineEdit, QTextBrowser
 from PyQt5.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot, QTimer, QUrl
 from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtGui import QPixmap, QIcon, QTextDocument, QTextImageFormat, QDesktopServices
+from PyQt5.QtGui import QPixmap, QIcon, QTextDocument, QTextImageFormat, QDesktopServices, QFont
 from PyQt5.uic import loadUi
 from utils.client import *
 from utils.credentials import google_password, google_username
@@ -370,7 +370,12 @@ class MainWindow(QMainWindow):
         self.navbar.actionWritable_3.triggered.connect(lambda: self.update_access('Writable'))
         self.navbar.pushButtonBack.clicked.connect(self.switch_to_home)
         self.navbar.pushButtonShare.clicked.connect(lambda: self.open_share_dialog(docName))
-         
+        self.navbar.pushButton.clicked.connect(self.make_bold)
+        self.navbar.pushButton_2.clicked.connect(self.make_italic)
+        self.navbar.pushButton_3.clicked.connect(self.make_underline)
+        self.navbar.pushButtonColour.clicked.connect(self.change_colour)
+        self.navbar.pushButtonFont.clicked.connect(self.change_font)
+
         existing_text_edit = self.navbar.textEdit
         self.navbar.verticalLayout.removeWidget(existing_text_edit)
         existing_text_edit.setParent(None)
@@ -782,6 +787,83 @@ class MainWindow(QMainWindow):
     def logout(self):
         self.auth_manager.logout()
         self.stacked_widget.setCurrentWidget(self.login_page)
+
+    def make_bold(self):
+        try:
+            cursor_position = self.text_edit.textCursor().position()
+            if self.text_edit.fontWeight() == QFont.Bold:
+                self.text_edit.setFontWeight(QFont.Normal)
+                self.navbar.pushButton.setStyleSheet("background-color: #FFFFFF;")
+            else:
+                self.text_edit.setFontWeight(QFont.Bold)
+                self.navbar.pushButton.setStyleSheet("background-color: #68B7DE;")
+
+            cursor = self.text_edit.textCursor()
+            cursor.setPosition(cursor_position)
+            self.text_edit.setTextCursor(cursor)
+        except Exception as e:
+            print(f'An error occurred during make_bold: {e}')
+
+    def make_italic(self):
+        try:
+            cursor_position = self.text_edit.textCursor().position()
+            if self.text_edit.fontItalic():
+                self.text_edit.setFontItalic(False)
+                self.navbar.pushButton_2.setStyleSheet("background-color: #FFFFFF;")
+            else:
+                self.text_edit.setFontItalic(True)
+                self.navbar.pushButton_2.setStyleSheet("background-color: #68B7DE;")
+            cursor = self.text_edit.textCursor()
+            cursor.setPosition(cursor_position)
+            self.text_edit.setTextCursor(cursor)
+        except Exception as e:
+            print(f'An error occurred during make_italic: {e}')
+
+    def make_underline(self):
+        try:
+            cursor_position = self.text_edit.textCursor().position()
+            if self.text_edit.fontUnderline():
+                self.text_edit.setFontUnderline(False)
+                self.navbar.pushButton_3.setStyleSheet("background-color: #FFFFFF;")
+            else:
+                self.text_edit.setFontUnderline(True)
+                self.navbar.pushButton_3.setStyleSheet("background-color: #68B7DE;")
+            cursor = self.text_edit.textCursor()
+            cursor.setPosition(cursor_position)
+            self.text_edit.setTextCursor(cursor)
+        except Exception as e:
+            print(f'An error occurred during make_underline: {e}')
+
+    def change_colour(self):
+        cursor_position = self.text_edit.textCursor().position()
+        colour = QColorDialog.getColor()
+        self.text_edit.setTextColor(colour)
+        cursor = self.text_edit.textCursor()
+        cursor.setPosition(cursor_position)
+        self.text_edit.setTextCursor(cursor)
+
+    def change_font(self):
+        cursor_position = self.text_edit.textCursor().position()
+        font, ok = QFontDialog.getFont()
+        if font and ok:
+            self.text_edit.setCurrentFont(font)
+            if font.bold():
+                self.navbar.pushButton.setStyleSheet("background-color: #68B7DE;")
+            else:
+                self.navbar.pushButton.setStyleSheet("background-color: #FFFFFF;")
+            if font.italic():
+                self.navbar.pushButton_2.setStyleSheet("background-color: #68B7DE;")
+            else:
+                self.navbar.pushButton_2.setStyleSheet("background-color: #FFFFFF;")
+            if font.underline():
+                self.navbar.pushButton_3.setStyleSheet("background-color: #68B7DE;")
+            else:
+                self.navbar.pushButton_3.setStyleSheet("background-color: #FFFFFF;")
+        
+        cursor = self.text_edit.textCursor()
+        cursor.setPosition(cursor_position)
+        self.text_edit.setTextCursor(cursor)
+            
     
     
 if __name__ == '__main__':
